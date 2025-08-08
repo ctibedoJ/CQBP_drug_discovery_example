@@ -1,0 +1,667 @@
+Drug Discovery Example
+{ "cells": [ { "cell_type": "markdown", "metadata": {}, "source": [ "# Drug Discovery Applications with CQBP
+", "
+", "This notebook demonstrates the use of the CQBP package for drug discovery applications. It explores molecular field representations, drug-target interactions, and virtual screening techniques." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "import sys
+", "import os
+", "import numpy as np
+", "import matplotlib.pyplot as plt
+", "from mpl_toolkits.mplot3d import Axes3D
+", "
+", "# Add parent directory to path to import CQBP package
+", "sys.path.append('..')
+", "
+", "from cqbp.molecular import Molecule, Atom, Protein
+", "from cqbp.fields import ElectrostaticField, StericField, FieldSimilarityMetric, TanimotoSimilarity
+", "from cqbp.applications import DrugTargetInteraction, VirtualScreening, PharmacophoreModel" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Creating Molecular Structures
+", "
+", "First, let's create some simple molecular structures to work with." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "def create_benzene():
+", " """Create a simple benzene molecule."""
+", " benzene = Molecule("Benzene")
+", "
+", " # Carbon atoms in a hexagon
+", " radius = 1.4 # Angstroms
+", " for i in range(6):
+", " angle = i * 2 * np.pi / 6
+", " x = radius * np.cos(angle)
+", " y = radius * np.sin(angle)
+", " z = 0.0
+", "
+", " carbon = Atom("C", np.array([x, y, z]), charge=0.0)
+", " benzene.add_atom(carbon)
+", "
+", " # Hydrogen atoms
+", " for i in range(6):
+", " angle = i * 2 * np.pi / 6
+", " x = 1.08 * radius * np.cos(angle)
+", " y = 1.08 * radius * np.sin(angle)
+", " z = 0.0
+", "
+", " hydrogen = Atom("H", np.array([x, y, z]), charge=0.0)
+", " benzene.add_atom(hydrogen)
+", "
+", " # Add bonds
+", " for i in range(6):
+", " # Carbon-carbon bonds
+", " benzene.add_bond(i, (i + 1) % 6, order=1.5, bond_type="aromatic")
+", "
+", " # Carbon-hydrogen bonds
+", " benzene.add_bond(i, i + 6, order=1.0, bond_type="single")
+", "
+", " return benzene
+", "
+", "def create_phenol():
+", " """Create a simple phenol molecule (benzene with OH group)."""
+", " phenol = create_benzene()
+", " phenol.name = "Phenol"
+", "
+", " # Remove one hydrogen
+", " phenol.atoms.pop(6) # Remove first hydrogen
+", " phenol.bonds.pop() # Remove its bond
+", "
+", " # Add oxygen
+", " oxygen = Atom("O", np.array([0.0, 2.8, 0.0]), charge=-0.4)
+", " oxygen_idx = phenol.add_atom(oxygen)
+", "
+", " # Add hydrogen to oxygen
+", " hydrogen = Atom("H", np.array([0.8, 3.2, 0.0]), charge=0.4)
+", " hydrogen_idx = phenol.add_atom(hydrogen)
+", "
+", " # Add bonds
+", " phenol.add_bond(0, oxygen_idx, order=1.0, bond_type="single")
+", " phenol.add_bond(oxygen_idx, hydrogen_idx, order=1.0, bond_type="single")
+", "
+", " return phenol
+", "
+", "def create_aspirin():
+", " """Create a simplified aspirin molecule."""
+", " aspirin = create_benzene()
+", " aspirin.name = "Aspirin"
+", "
+", " # Remove two hydrogens
+", " aspirin.atoms.pop(6) # Remove first hydrogen
+", " aspirin.atoms.pop(6) # Remove second hydrogen (now at index 6 after first removal)
+", " aspirin.bonds.pop()
+", " aspirin.bonds.pop()
+", "
+", " # Add carboxyl group
+", " c_carboxyl = Atom("C", np.array([0.0, 2.8, 0.0]), charge=0.5)
+", " o_double = Atom("O", np.array([-0.8, 3.5, 0.0]), charge=-0.5)
+", " o_single = Atom("O", np.array([0.8, 3.5, 0.0]), charge=-0.4)
+", " h_hydroxyl = Atom("H", np.array([1.5, 3.2, 0.0]), charge=0.4)
+", "
+", " c_idx = aspirin.add_atom(c_carboxyl)
+", " o1_idx = aspirin.add_atom(o_double)
+", " o2_idx = aspirin.add_atom(o_single)
+", " h_idx = aspirin.add_atom(h_hydroxyl)
+", "
+", " # Add acetyl group
+", " c_acetyl = Atom("C", np.array([2.4, 0.0, 0.0]), charge=0.5)
+", " o_acetyl = Atom("O", np.array([3.0, 1.0, 0.0]), charge=-0.5)
+", " c_methyl = Atom("C", np.array([3.2, -1.2, 0.0]), charge=0.0)
+", "
+", " ac_idx = aspirin.add_atom(c_acetyl)
+", " ao_idx = aspirin.add_atom(o_acetyl)
+", " am_idx = aspirin.add_atom(c_methyl)
+", "
+", " # Add bonds
+", " aspirin.add_bond(0, c_idx, order=1.0, bond_type="single")
+", " aspirin.add_bond(c_idx, o1_idx, order=2.0, bond_type="double")
+", " aspirin.add_bond(c_idx, o2_idx, order=1.0, bond_type="single")
+", " aspirin.add_bond(o2_idx, h_idx, order=1.0, bond_type="single")
+", "
+", " aspirin.add_bond(1, ac_idx, order=1.0, bond_type="single")
+", " aspirin.add_bond(ac_idx, ao_idx, order=2.0, bond_type="double")
+", " aspirin.add_bond(ac_idx, am_idx, order=1.0, bond_type="single")
+", "
+", " return aspirin
+", "
+", "def create_simple_protein():
+", " """Create a simple protein structure with a binding pocket."""
+", " protein = Protein("SimpleProtein")
+", "
+", " # Create a few residues
+", " res1 = protein.add_residue("ALA", 1, "A")
+", " res2 = protein.add_residue("SER", 2, "A")
+", " res3 = protein.add_residue("ASP", 3, "A")
+", " res4 = protein.add_residue("LYS", 4, "A")
+", " res5 = protein.add_residue("PHE", 5, "A")
+", "
+", " # Add atoms to residues
+", " # ALA
+", " n1 = Atom("N", np.array([0.0, 0.0, 0.0]), charge=-0.5)
+", " ca1 = Atom("C", np.array([1.5, 0.0, 0.0]), charge=0.1)
+", " c1 = Atom("C", np.array([2.0, 1.4, 0.0]), charge=0.5)
+", " o1 = Atom("O", np.array([1.2, 2.3, 0.0]), charge=-0.5)
+", " cb1 = Atom("C", np.array([2.3, -1.0, 0.8]), charge=0.0)
+", "
+", " protein.add_atom_to_residue(n1, res1)
+", " protein.add_atom_to_residue(ca1, res1)
+", " protein.add_atom_to_residue(c1, res1)
+", " protein.add_atom_to_residue(o1, res1)
+", " protein.add_atom_to_residue(cb1, res1)
+", "
+", " # SER
+", " n2 = Atom("N", np.array([3.3, 1.6, 0.0]), charge=-0.5)
+", " ca2 = Atom("C", np.array([4.0, 2.9, 0.0]), charge=0.1)
+", " c2 = Atom("C", np.array([5.5, 2.7, 0.0]), charge=0.5)
+", " o2 = Atom("O", np.array([6.0, 1.6, 0.0]), charge=-0.5)
+", " cb2 = Atom("C", np.array([3.6, 3.7, 1.2]), charge=0.1)
+", " og = Atom("O", np.array([4.2, 5.0, 1.3]), charge=-0.5)
+", "
+", " protein.add_atom_to_residue(n2, res2)
+", " protein.add_atom_to_residue(ca2, res2)
+", " protein.add_atom_to_residue(c2, res2)
+", " protein.add_atom_to_residue(o2, res2)
+", " protein.add_atom_to_residue(cb2, res2)
+", " protein.add_atom_to_residue(og, res2)
+", "
+", " # ASP
+", " n3 = Atom("N", np.array([6.3, 3.8, 0.0]), charge=-0.5)
+", " ca3 = Atom("C", np.array([7.7, 3.7, 0.0]), charge=0.1)
+", " c3 = Atom("C", np.array([8.3, 5.1, 0.0]), charge=0.5)
+", " o3 = Atom("O", np.array([7.6, 6.1, 0.0]), charge=-0.5)
+", " cb3 = Atom("C", np.array([8.2, 2.9, 1.2]), charge=0.0)
+", " cg3 = Atom("C", np.array([9.7, 2.7, 1.2]), charge=0.5)
+", " od1 = Atom("O", np.array([10.2, 1.9, 2.0]), charge=-0.8)
+", " od2 = Atom("O", np.array([10.4, 3.3, 0.4]), charge=-0.8)
+", "
+", " protein.add_atom_to_residue(n3, res3)
+", " protein.add_atom_to_residue(ca3, res3)
+", " protein.add_atom_to_residue(c3, res3)
+", " protein.add_atom_to_residue(o3, res3)
+", " protein.add_atom_to_residue(cb3, res3)
+", " protein.add_atom_to_residue(cg3, res3)
+", " protein.add_atom_to_residue(od1, res3)
+", " protein.add_atom_to_residue(od2, res3)
+", "
+", " # LYS
+", " n4 = Atom("N", np.array([9.6, 5.2, 0.0]), charge=-0.5)
+", " ca4 = Atom("C", np.array([10.3, 6.5, 0.0]), charge=0.1)
+", " c4 = Atom("C", np.array([11.8, 6.3, 0.0]), charge=0.5)
+", " o4 = Atom("O", np.array([12.3, 5.2, 0.0]), charge=-0.5)
+", " cb4 = Atom("C", np.array([10.0, 7.3, 1.3]), charge=0.0)
+", " cg4 = Atom("C", np.array([10.7, 8.6, 1.3]), charge=0.0)
+", " cd4 = Atom("C", np.array([10.4, 9.4, 2.6]), charge=0.0)
+", " ce4 = Atom("C", np.array([11.1, 10.7, 2.6]), charge=0.1)
+", " nz4 = Atom("N", np.array([10.8, 11.5, 3.8]), charge=0.8)
+", "
+", " protein.add_atom_to_residue(n4, res4)
+", " protein.add_atom_to_residue(ca4, res4)
+", " protein.add_atom_to_residue(c4, res4)
+", " protein.add_atom_to_residue(o4, res4)
+", " protein.add_atom_to_residue(cb4, res4)
+", " protein.add_atom_to_residue(cg4, res4)
+", " protein.add_atom_to_residue(cd4, res4)
+", " protein.add_atom_to_residue(ce4, res4)
+", " protein.add_atom_to_residue(nz4, res4)
+", "
+", " # PHE
+", " n5 = Atom("N", np.array([12.6, 7.4, 0.0]), charge=-0.5)
+", " ca5 = Atom("C", np.array([14.0, 7.3, 0.0]), charge=0.1)
+", " c5 = Atom("C", np.array([14.6, 8.7, 0.0]), charge=0.5)
+", " o5 = Atom("O", np.array([13.9, 9.7, 0.0]), charge=-0.5)
+", " cb5 = Atom("C", np.array([14.5, 6.5, 1.2]), charge=0.0)
+", "
+", " # Add phenyl ring
+", " cg5 = Atom("C", np.array([16.0, 6.4, 1.2]), charge=0.0)
+", " cd1 = Atom("C", np.array([16.7, 5.6, 2.1]), charge=0.0)
+", " cd2 = Atom("C", np.array([16.7, 7.2, 0.3]), charge=0.0)
+", " ce1 = Atom("C", np.array([18.1, 5.6, 2.1]), charge=0.0)
+", " ce2 = Atom("C", np.array([18.1, 7.2, 0.3]), charge=0.0)
+", " cz5 = Atom("C", np.array([18.8, 6.4, 1.2]), charge=0.0)
+", "
+", " protein.add_atom_to_residue(n5, res5)
+", " protein.add_atom_to_residue(ca5, res5)
+", " protein.add_atom_to_residue(c5, res5)
+", " protein.add_atom_to_residue(o5, res5)
+", " protein.add_atom_to_residue(cb5, res5)
+", " protein.add_atom_to_residue(cg5, res5)
+", " protein.add_atom_to_residue(cd1, res5)
+", " protein.add_atom_to_residue(cd2, res5)
+", " protein.add_atom_to_residue(ce1, res5)
+", " protein.add_atom_to_residue(ce2, res5)
+", " protein.add_atom_to_residue(cz5, res5)
+", "
+", " return protein
+", "
+", "# Create our molecules
+", "benzene = create_benzene()
+", "phenol = create_phenol()
+", "aspirin = create_aspirin()
+", "protein = create_simple_protein()
+", "
+", "print(f"Created molecules: {benzene.name}, {phenol.name}, {aspirin.name}")
+", "print(f"Created protein: {protein.name} with {len(protein.residues)} residues and {len(protein.atoms)} atoms")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Visualizing Molecular Structures
+", "
+", "Let's visualize the molecular structures we created." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "def plot_molecule(molecule, ax=None, title=None, show_bonds=True):
+", " """Plot a molecule in 3D."""
+", " if ax is None:
+", " fig = plt.figure(figsize=(8, 8))
+", " ax = fig.add_subplot(111, projection='3d')
+", "
+", " # Element colors
+", " colors = {
+", " "C": "black",
+", " "H": "lightgray",
+", " "O": "red",
+", " "N": "blue",
+", " "S": "yellow",
+", " "P": "orange"
+", " }
+", "
+", " # Element sizes
+", " sizes = {
+", " "C": 50,
+", " "H": 20,
+", " "O": 60,
+", " "N": 60,
+", " "S": 70,
+", " "P": 70
+", " }
+", "
+", " # Plot atoms
+", " for i, atom in enumerate(molecule.atoms):
+", " x, y, z = atom.position
+", " color = colors.get(atom.element, "gray")
+", " size = sizes.get(atom.element, 40)
+", " ax.scatter(x, y, z, color=color, s=size)
+", "
+", " # Uncomment to show atom indices
+", " # ax.text(x, y, z, str(i), fontsize=8)
+", "
+", " # Plot bonds
+", " if show_bonds:
+", " for bond in molecule.bonds:
+", " atom1 = molecule.atoms[bond.atom1_idx]
+", " atom2 = molecule.atoms[bond.atom2_idx]
+", " x = [atom1.position[0], atom2.position[0]]
+", " y = [atom1.position[1], atom2.position[1]]
+", " z = [atom1.position[2], atom2.position[2]]
+", " ax.plot(x, y, z, 'k-', linewidth=1, alpha=0.7)
+", "
+", " # Set labels and title
+", " ax.set_xlabel('X (\u00c5)')
+", " ax.set_ylabel('Y (\u00c5)')
+", " ax.set_zlabel('Z (\u00c5)')
+", "
+", " if title is None:
+", " title = molecule.name
+", " ax.set_title(title)
+", "
+", " # Set equal aspect ratio
+", " max_range = np.array([ax.get_xlim(), ax.get_ylim(), ax.get_zlim()]).T
+", " max_range = max_range[1] - max_range[0]
+", " max_range = max_range.max() / 2.0
+", " mid_x = (ax.get_xlim()[1] + ax.get_xlim()[0]) / 2
+", " mid_y = (ax.get_ylim()[1] + ax.get_ylim()[0]) / 2
+", " mid_z = (ax.get_zlim()[1] + ax.get_zlim()[0]) / 2
+", " ax.set_xlim(mid_x - max_range, mid_x + max_range)
+", " ax.set_ylim(mid_y - max_range, mid_y + max_range)
+", " ax.set_zlim(mid_z - max_range, mid_z + max_range)
+", "
+", " return ax
+", "
+", "# Plot all molecules
+", "fig = plt.figure(figsize=(15, 5))
+", "
+", "ax1 = fig.add_subplot(131, projection='3d')
+", "plot_molecule(benzene, ax1)
+", "
+", "ax2 = fig.add_subplot(132, projection='3d')
+", "plot_molecule(phenol, ax2)
+", "
+", "ax3 = fig.add_subplot(133, projection='3d')
+", "plot_molecule(aspirin, ax3)
+", "
+", "plt.tight_layout()
+", "plt.show()
+", "
+", "# Plot protein
+", "fig = plt.figure(figsize=(10, 10))
+", "ax = fig.add_subplot(111, projection='3d')
+", "plot_molecule(protein, ax, show_bonds=False)
+", "plt.tight_layout()
+", "plt.show()" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Molecular Field Representations
+", "
+", "Now let's create and visualize molecular fields for our molecules." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "def calculate_and_plot_field(molecule, field_type="electrostatic", grid_size=20, grid_spacing=0.5):
+", " """Calculate and plot a molecular field."""
+", " # Calculate field
+", " if field_type == "electrostatic":
+", " field = molecule.to_electrostatic_field()
+", " cmap = 'coolwarm'
+", " title = f"{molecule.name} Electrostatic Field"
+", " elif field_type == "steric":
+", " field = molecule.to_steric_field()
+", " cmap = 'viridis'
+", " title = f"{molecule.name} Steric Field"
+", " else:
+", " raise ValueError(f"Unknown field type: {field_type}")
+", "
+", " # Create grid
+", " center = molecule.get_center_of_mass()
+", " x = np.linspace(center[0] - grid_size/2, center[0] + grid_size/2, int(grid_size/grid_spacing))
+", " y = np.linspace(center[1] - grid_size/2, center[1] + grid_size/2, int(grid_size/grid_spacing))
+", " z = np.array([0.0]) # 2D slice at z=0
+", "
+", " X, Y = np.meshgrid(x, y)
+", " grid_points = np.zeros((len(x) * len(y), 3))
+", " grid_points[:, 0] = X.flatten()
+", " grid_points[:, 1] = Y.flatten()
+", "
+", " # Evaluate field
+", " field_values = field.evaluate(grid_points)
+", " field_grid = field_values.reshape(len(y), len(x))
+", "
+", " # Plot
+", " fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+", "
+", " # Plot molecule
+", " for i, atom in enumerate(molecule.atoms):
+", " if atom.element != "H": # Skip hydrogens for clarity
+", " x, y, z = atom.position
+", " ax1.scatter(x, y, s=100, color='black')
+", " ax1.text(x, y, atom.element, fontsize=10, ha='center', va='center')
+", "
+", " # Plot field as contour
+", " contour = ax1.contourf(X, Y, field_grid, 20, cmap=cmap, alpha=0.7)
+", " fig.colorbar(contour, ax=ax1)
+", " ax1.set_title(title)
+", " ax1.set_xlabel('X (\u00c5)')
+", " ax1.set_ylabel('Y (\u00c5)')
+", " ax1.set_aspect('equal')
+", "
+", " # Plot field as surface
+", " surf = ax2.pcolormesh(X, Y, field_grid, cmap=cmap, shading='auto')
+", " fig.colorbar(surf, ax=ax2)
+", " ax2.set_title(f"{title} (Surface View)")
+", " ax2.set_xlabel('X (\u00c5)')
+", " ax2.set_ylabel('Y (\u00c5)')
+", " ax2.set_aspect('equal')
+", "
+", " plt.tight_layout()
+", " plt.show()
+", "
+", " return field, field_grid, (X, Y)
+", "
+", "# Calculate and plot electrostatic fields
+", "phenol_field, phenol_grid, (X, Y) = calculate_and_plot_field(phenol, "electrostatic")
+", "aspirin_field, aspirin_grid, _ = calculate_and_plot_field(aspirin, "electrostatic")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Field Similarity Analysis
+", "
+", "Let's compare the molecular fields of our compounds using similarity metrics." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "def compare_fields(molecules, field_type="electrostatic"):
+", " """Compare fields between multiple molecules."""
+", " n = len(molecules)
+", " similarity_matrix = np.zeros((n, n))
+", "
+", " # Create fields
+", " fields = []
+", " for molecule in molecules:
+", " if field_type == "electrostatic":
+", " fields.append(molecule.to_electrostatic_field())
+", " elif field_type == "steric":
+", " fields.append(molecule.to_steric_field())
+", "
+", " # Create grid points
+", " grid_size = 20
+", " grid_spacing = 0.5
+", "
+", " # Use average center of all molecules
+", " centers = np.array([molecule.get_center_of_mass() for molecule in molecules])
+", " center = np.mean(centers, axis=0)
+", "
+", " x = np.linspace(center[0] - grid_size/2, center[0] + grid_size/2, int(grid_size/grid_spacing))
+", " y = np.linspace(center[1] - grid_size/2, center[1] + grid_size/2, int(grid_size/grid_spacing))
+", " z = np.linspace(center[2] - grid_size/2, center[2] + grid_size/2, int(grid_size/grid_spacing))
+", "
+", " X, Y, Z = np.meshgrid(x, y, z)
+", " grid_points = np.vstack([X.flatten(), Y.flatten(), Z.flatten()]).T
+", "
+", " # Calculate similarity
+", " similarity_metric = TanimotoSimilarity()
+", "
+", " for i in range(n):
+", " for j in range(i, n):
+", " similarity = similarity_metric.compute(fields[i], fields[j], grid_points)
+", " similarity_matrix[i, j] = similarity
+", " similarity_matrix[j, i] = similarity
+", "
+", " # Plot similarity matrix
+", " fig, ax = plt.subplots(figsize=(8, 6))
+", " im = ax.imshow(similarity_matrix, cmap='viridis', vmin=0, vmax=1)
+", "
+", " # Add labels
+", " molecule_names = [molecule.name for molecule in molecules]
+", " ax.set_xticks(np.arange(n))
+", " ax.set_yticks(np.arange(n))
+", " ax.set_xticklabels(molecule_names)
+", " ax.set_yticklabels(molecule_names)
+", "
+", " # Rotate x labels
+", " plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+", "
+", " # Add colorbar
+", " cbar = fig.colorbar(im)
+", " cbar.set_label('Tanimoto Similarity')
+", "
+", " # Add values to cells
+", " for i in range(n):
+", " for j in range(n):
+", " text = ax.text(j, i, f"{similarity_matrix[i, j]:.2f}",
+", " ha="center", va="center", color="white" if similarity_matrix[i, j] < 0.7 else "black")
+", "
+", " ax.set_title(f"{field_type.capitalize()} Field Similarity")
+", " fig.tight_layout()
+", " plt.show()
+", "
+", " return similarity_matrix
+", "
+", "# Compare electrostatic fields
+", "molecules = [benzene, phenol, aspirin]
+", "electrostatic_similarity = compare_fields(molecules, "electrostatic")
+", "
+", "# Compare steric fields
+", "steric_similarity = compare_fields(molecules, "steric")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Drug-Target Interaction Analysis
+", "
+", "Now let's analyze the interaction between a drug molecule and a protein target." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "# Define binding site residues
+", "binding_site = [2, 3, 4] # ASP, LYS, PHE
+", "
+", "# Create drug-target interaction object
+", "interaction = DrugTargetInteraction(aspirin, protein)
+", "interaction.set_binding_site(binding_site)
+", "
+", "# Calculate molecular fields
+", "interaction.calculate_fields(["electrostatic", "steric"])
+", "
+", "# Calculate field similarity
+", "similarities = interaction.calculate_field_similarity("tanimoto")
+", "
+", "print("Field similarities between drug and target:")
+", "for field_type, similarity in similarities.items():
+", " print(f"{field_type}: {similarity:.4f}")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Molecular Docking
+", "
+", "Let's perform a simple molecular docking to find the optimal binding pose." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "# Dock the drug to the target
+", "poses = interaction.dock_drug(method="field_based", n_poses=5)
+", "
+", "# Print docking results
+", "print("Docking results:")
+", "for i, pose in enumerate(poses):
+", " print(f"Pose {i+1}: Score = {pose['score']:.4f}")
+", "
+", "# Calculate binding energy
+", "binding_energy = interaction.calculate_binding_energy()
+", "print(f"\ Estimated binding energy: {binding_energy:.2f} kcal/mol")
+", "
+", "# Analyze interactions
+", "interactions = interaction.analyze_interactions()
+", "
+", "print("\ Interactions:")
+", "for interaction_type, interaction_list in interactions.items():
+", " if interaction_list:
+", " print(f"\ {interaction_type.capitalize()} interactions:")
+", " for i, inter in enumerate(interaction_list):
+", " residue = protein.residues[inter['target_residue']]
+", " print(f" {i+1}. {residue['name']}{residue['number']} - Distance: {inter['distance']:.2f} \u00c5")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Virtual Screening
+", "
+", "Let's perform a virtual screening of our compounds against the protein target." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "# Create a virtual screening object
+", "screening = VirtualScreening(protein, [benzene, phenol, aspirin])
+", "screening.set_binding_site(binding_site)
+", "
+", "# Prepare target
+", "screening.prepare_target(["electrostatic", "steric"])
+", "
+", "# Screen compounds
+", "results = screening.screen_compounds(method="field_similarity")
+", "
+", "# Print results
+", "print("Virtual screening results:")
+", "for i, result in enumerate(results):
+", " print(f"{i+1}. {result['compound_name']}: Score = {result['score']:.4f}")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Pharmacophore Modeling
+", "
+", "Let's create a pharmacophore model based on our active compounds." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "# Create a pharmacophore model from active compounds
+", "active_compounds = [phenol, aspirin] # Assume these are active
+", "pharmacophore = PharmacophoreModel.from_molecules(active_compounds)
+", "
+", "# Print pharmacophore features
+", "print("Pharmacophore features:")
+", "for i, feature in enumerate(pharmacophore.features):
+", " print(f"{i+1}. Type: {feature['type']}, Position: {feature['position']}, Radius: {feature['radius']:.2f}")
+", "
+", "# Match molecules against the pharmacophore
+", "print("\ Pharmacophore matching:")
+", "for molecule in [benzene, phenol, aspirin]:
+", " score = pharmacophore.match_molecule(molecule)
+", " print(f"{molecule.name}: Score = {score:.4f}")
+", "
+", "# Screen molecules
+", "matches = pharmacophore.screen_molecules([benzene, phenol, aspirin], threshold=0.5)
+", "print("\ Pharmacophore screening results:")
+", "for idx, score in matches:
+", " molecule = [benzene, phenol, aspirin][idx]
+", " print(f"{molecule.name}: Score = {score:.4f}")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Visualizing the Pharmacophore Model
+", "
+", "Let's visualize the pharmacophore model with its features." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "def plot_pharmacophore(pharmacophore, molecules=None):
+", " """Plot a pharmacophore model with optional molecules."""
+", " fig = plt.figure(figsize=(10, 8))
+", " ax = fig.add_subplot(111, projection='3d')
+", "
+", " # Feature colors
+", " feature_colors = {
+", " "hydrophobic": "green",
+", " "hbond_donor": "blue",
+", " "hbond_acceptor": "red",
+", " "positive": "cyan",
+", " "negative": "magenta"
+", " }
+", "
+", " # Plot pharmacophore features
+", " for feature in pharmacophore.features:
+", " x, y, z = feature["position"]
+", " r = feature["radius"]
+", " color = feature_colors.get(feature["type"], "gray")
+", "
+", " # Plot feature center
+", " ax.scatter(x, y, z, color=color, s=100, alpha=0.8)
+", "
+", " # Plot feature sphere (simplified as a circle in 3D)
+", " u = np.linspace(0, 2 * np.pi, 30)
+", " v = np.linspace(0, np.pi, 30)
+", " sphere_x = x + r * np.outer(np.cos(u), np.sin(v))
+", " sphere_y = y + r * np.outer(np.sin(u), np.sin(v))
+", " sphere_z = z + r * np.outer(np.ones_like(u), np.cos(v))
+", " ax.plot_surface(sphere_x, sphere_y, sphere_z, color=color, alpha=0.2)
+", "
+", " # Add label
+", " ax.text(x, y, z, feature["type"], fontsize=10)
+", "
+", " # Plot molecules if provided
+", " if molecules:
+", " for molecule in molecules:
+", " # Plot non-hydrogen atoms
+", " for atom in molecule.atoms:
+", " if atom.element != "H": # Skip hydrogens for clarity
+", " x, y, z = atom.position
+", " ax.scatter(x, y, z, color='black', s=30, alpha=0.5)
+", "
+", " # Set labels
+", " ax.set_xlabel('X (\u00c5)')
+", " ax.set_ylabel('Y (\u00c5)')
+", " ax.set_zlabel('Z (\u00c5)')
+", " ax.set_title('Pharmacophore Model')
+", "
+", " # Add legend
+", " legend_elements = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color, markersize=10, label=feature_type)
+", " for feature_type, color in feature_colors.items()]
+", " ax.legend(handles=legend_elements, loc='upper right')
+", "
+", " plt.tight_layout()
+", " plt.show()
+", "
+", "# Plot the pharmacophore model with active compounds
+", "plot_pharmacophore(pharmacophore, active_compounds)" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## PBPK Modeling
+", "
+", "Finally, let's simulate the pharmacokinetics of our drug using a PBPK model." ] }, { "cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": [ "from cqbp.applications import PBPKModel
+", "
+", "# Create a default PBPK model
+", "pbpk_model = PBPKModel.create_default_model(
+", " drug_clearance=0.1, # L/min
+", " drug_fraction_unbound=0.8 # Fraction unbound in plasma
+", ")
+", "
+", "# Set drug dose
+", "pbpk_model.set_dose(500.0, "absorption") # 500 mg oral dose
+", "
+", "# Define simulation time points
+", "time_points = np.linspace(0, 1440, 100) # 0-24 hours in minutes
+", "
+", "# Run simulation
+", "results = pbpk_model.simulate(time_points)
+", "
+", "# Plot concentration-time profiles
+", "plt.figure(figsize=(12, 8))
+", "
+", "# Plot on linear scale
+", "plt.subplot(2, 1, 1)
+", "for compartment, concentrations in results.items():
+", " if compartment in ["plasma", "liver", "kidney", "brain"]:
+", " plt.plot(time_points / 60, concentrations, label=compartment.capitalize())
+", "plt.xlabel('Time (hours)')
+", "plt.ylabel('Concentration (mg/L)')
+", "plt.title('PBPK Model Simulation - Linear Scale')
+", "plt.legend()
+", "plt.grid(True)
+", "
+", "# Plot on semi-log scale
+", "plt.subplot(2, 1, 2)
+", "for compartment, concentrations in results.items():
+", " if compartment in ["plasma", "liver", "kidney", "brain"]:
+", " plt.semilogy(time_points / 60, concentrations, label=compartment.capitalize())
+", "plt.xlabel('Time (hours)')
+", "plt.ylabel('Concentration (mg/L)')
+", "plt.title('PBPK Model Simulation - Semi-log Scale')
+", "plt.legend()
+", "plt.grid(True)
+", "
+", "plt.tight_layout()
+", "plt.show()
+", "
+", "# Calculate pharmacokinetic parameters
+", "plasma_auc = pbpk_model.calculate_auc(results["plasma"], time_points)
+", "half_life = pbpk_model.calculate_half_life(results["plasma"], time_points)
+", "vd = pbpk_model.calculate_volume_of_distribution(500.0, results["plasma"])
+", "
+", "print("Pharmacokinetic parameters:")
+", "print(f"AUC: {plasma_auc:.1f} mg\u00b7min/L")
+", "print(f"Half-life: {half_life:.1f} min ({half_life/60:.1f} hours)")
+", "print(f"Volume of distribution: {vd:.1f} L")" ] }, { "cell_type": "markdown", "metadata": {}, "source": [ "## Conclusion
+", "
+", "In this notebook, we've demonstrated the use of the CQBP package for various drug discovery applications:
+", "
+", "1. Creating and visualizing molecular structures
+", "2. Generating molecular field representations
+", "3. Analyzing field similarities between molecules
+", "4. Modeling drug-target interactions
+", "5. Performing molecular docking
+", "6. Virtual screening of compound libraries
+", "7. Creating and using pharmacophore models
+", "8. Simulating drug pharmacokinetics with PBPK modeling
+", "
+", "These techniques form the foundation of modern computational drug discovery and can be applied to real-world drug development projects." ] } ], "metadata": { "kernelspec": { "display_name": "Python 3", "language": "python", "name": "python3" }, "language_info": { "codemirror_mode": { "name": "ipython", "version": 3 }, "file_extension": ".py", "mimetype": "text/x-python", "name": "python", "nbconvert_exporter": "python", "pygments_lexer": "ipython3", "version": "3.8.10" } }, "nb
